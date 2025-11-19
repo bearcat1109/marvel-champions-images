@@ -74,12 +74,14 @@ def download_card_image(card_code, filename, folder, custom_url=None):
 def find_core_set_code(original_card_info):
     """
     Searches for the functionally identical Core Set printing of a card.
-    Uses subname and pack code for differentiation.
+    Uses subname and type_code for differentiation.
     """
     card_name = original_card_info['name']
     original_subname = original_card_info.get('subname')
-    original_type = original_card_info.get('type_code') # <-- USE THIS FIELD
-    
+    original_type = original_card_info.get('type_code')
+    original_traits = set(original_card_info.get('traits', '').strip().split('. '))
+    GENERIC_RESOURCE_NAMES = {"Energy", "Genius", "Strength"}
+
     # 1. Prepare search URL and fetch results (unchanged)
     search_name = requests.utils.quote(card_name)
     search_url = f"{API_CARDS_ENDPOINT}?name={search_name}"
@@ -100,18 +102,32 @@ def find_core_set_code(original_card_info):
         if candidate_card.get('name') != card_name:
             return False
             
-        # C. Must match the type code (e.g., 'resource' must match 'resource')
-        # This prevents matching a 'Hero' with an 'Ally'
+        # --- EXCEPTION: WHITELIST CHECK ---
+        # If the card is one of the generic resource cards, bypass all strict trait/subname checks.
+        if candidate_card.get('name') in GENERIC_RESOURCE_NAMES:
+            # We already confirmed pack_code and name, so this is a valid swap.
+            return True    
+
+        # C. CRITICAL CHECK: Type code must match (e.g., 'resource' MUST match 'resource')
         if candidate_card.get('type_code') != original_type:
-             return False
+             return False # Prevents swapping Hero/Alter-Ego with an Ally
         
-        # D. Subname Check: If *both* cards have a subname, they must match.
-        # This catches cards like "Spider-Man (Peter Parker)" vs "Spider-Man (Miles Morales)"
+        # D. Subname Check: If *either* card has a subname, they must match exactly.
         candidate_subname = candidate_card.get('subname')
-        if original_subname or candidate_subname:
-            if original_subname != candidate_subname:
-                return False
-                
+        if original_subname != candidate_subname:
+            return False # Prevents swapping Spider-Man (Peter Parker) with Spider-Man (Miles Morales)
+
+        # E. CRITICAL TRAIT CHECK: Only swap if the full set of traits matches.
+        # This will distinguish unique Allies.
+        candidate_traits = set(candidate_card.get('traits', '').strip().split('. '))
+        if '' in candidate_traits: candidate_traits.remove('')
+        
+        # Only swap if the original card's traits are identical to the Core Set card's traits
+        if original_traits != candidate_traits:
+            # If the original card is highly unique (like a Web-Warrior Ally), it won't 
+            # match the Core Set Ally traits, and the function will return False here.
+            return False
+
         # If all checks pass, it's the Core Set equivalent
         return True
         
