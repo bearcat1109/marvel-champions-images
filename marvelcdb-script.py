@@ -8,7 +8,8 @@ BASE_URL = "https://marvelcdb.com"
 DECKLIST_ID = 38353  # Your specific deck ID
 DECKLIST_ENDPOINT = f"{BASE_URL}/api/public/decklist/{DECKLIST_ID}"
 API_CARDS_ENDPOINT = f"{BASE_URL}/api/public/cards"
-IMAGE_URL_TEMPLATE = f"{BASE_URL}/card_image/{{card_id}}.jpg"
+#IMAGE_URL_TEMPLATE = f"{BASE_URL}/card_image/{{card_id}}.jpg"
+IMAGE_URL_TEMPLATE = f"{BASE_URL}/bundles/cards/{{card_id}}.png"
 
 OUTPUT_FOLDER = f"deck_{DECKLIST_ID}_cards"
 # ---------------------
@@ -29,65 +30,101 @@ def get_json_data(url, description):
 def download_card_image(card_code, filename, folder, custom_url=None):
     """Downloads a single card image and saves it."""
     
-    # Use the custom URL (from imagesrc) if provided, otherwise use the default template
     image_url = custom_url if custom_url else IMAGE_URL_TEMPLATE.format(card_id=card_code)
-    
-    # 2. Define the save path (ensure we use the code for unique file names)
     save_path = os.path.join(folder, f"{card_code}_{filename}.jpg")
-    #print(f"DEBUG: Saving to {os.path.abspath(save_path)}")
 
-    # Check if file already exists
-    if os.path.exists(save_path):
-        return
+    # Set initial success flag to False
+    download_success = False
     
     try:
-        # 3. Download the image data (without streaming)
+        # 1. Download the image data
         image_response = requests.get(image_url, timeout=10)
-        image_response.raise_for_status()
+        # 2. Check for HTTP errors (4xx/5xx)
+        image_response.raise_for_status() 
 
+        # 3. Check if any content was received
+        if not image_response.content:
+            print(f"  Warning: Received empty content for {filename} ({card_code}). URL: {image_url}")
+            return
+            
         # 4. Save the image content directly
         with open(save_path, 'wb') as f:
             f.write(image_response.content)
-
-        print(f"  Downloaded: {filename} ({card_code})")
+            
+        # 5. Check if the file was written and has a reasonable size
+        if os.path.getsize(save_path) > 1000: # Images should be > 1KB
+            download_success = True
+        else:
+            print(f"  Warning: File written for {filename} is too small ({os.path.getsize(save_path)} bytes). Deleting.")
+            os.remove(save_path) # Delete the empty/corrupt file
         
     except requests.exceptions.RequestException as e:
         # If we fail, print the specific URL used
         print(f"  Failed to download {filename} ({card_code}): {e} for URL: {image_url}")
-    
+    except Exception as e:
+        print(f"  Unexpected error during file write for {filename}: {e}")
+        
+    finally:
+        if download_success:
+            print(f"  Downloaded: {filename} ({card_code})")
+            
     # Be polite to the server
     sleep(0.1)
 
-# --- REPLACE find_core_set_code WITH THIS UPDATED VERSION ---
-
-def find_core_set_code(card_name):
+def find_core_set_code(original_card_info):
     """
-    Searches the MarvelCDB API for the Core Set printing of a card by its name, 
-    using a strict match to prevent false positives.
+    Searches for the functionally identical Core Set printing of a card.
+    Uses subname and pack code for differentiation.
     """
-    # 1. Prepare search URL (uses URL encoding for the name)
+    card_name = original_card_info['name']
+    original_subname = original_card_info.get('subname')
+    original_type = original_card_info.get('type_code') # <-- USE THIS FIELD
+    
+    # 1. Prepare search URL and fetch results (unchanged)
     search_name = requests.utils.quote(card_name)
-    # Note: We must still use the 'name' parameter as it's the only public search filter
     search_url = f"{API_CARDS_ENDPOINT}?name={search_name}"
     
     print(f"  Searching for Core Set printing of '{card_name}'...")
-    
     search_results = get_json_data(search_url, f"search for {card_name}")
     
     if not search_results:
         return None 
 
-    # 2. STRICT FILTERING: Find the card that EXACTLY matches the name AND is from the core pack.
+    # 2. STRICT FILTERING: Use a strict set of criteria
+    def is_functionally_identical(candidate_card):
+        # A. Must be from the Core Set
+        if candidate_card.get('pack_code') != 'core':
+            return False
+            
+        # B. Must have the exact main name
+        if candidate_card.get('name') != card_name:
+            return False
+            
+        # C. Must match the type code (e.g., 'resource' must match 'resource')
+        # This prevents matching a 'Hero' with an 'Ally'
+        if candidate_card.get('type_code') != original_type:
+             return False
+        
+        # D. Subname Check: If *both* cards have a subname, they must match.
+        # This catches cards like "Spider-Man (Peter Parker)" vs "Spider-Man (Miles Morales)"
+        candidate_subname = candidate_card.get('subname')
+        if original_subname or candidate_subname:
+            if original_subname != candidate_subname:
+                return False
+                
+        # If all checks pass, it's the Core Set equivalent
+        return True
+        
     core_card = next((
         card for card in search_results 
-        if card.get('pack_code') == 'core' and card.get('name') == card_name # <-- ADDED STRICT NAME CHECK
+        if is_functionally_identical(card)
     ), None)
     
     if core_card:
-        # We found the correct card. Return its code.
+        subname = core_card.get('subname', 'N/A')
+        print(f"  --> Core Set match found: {core_card.get('name')} ({subname}) Type: {core_card.get('type_code')}")
         return core_card.get('code')
     else:
-        # No Core Set version matching the exact name was found.
         return None
 
 def pull_card_images_by_deck(deck_id, output_folder):
@@ -133,7 +170,7 @@ def pull_card_images_by_deck(deck_id, output_folder):
             
             # Check if we should find a Core Set alternative
             if original_card_info.get('pack_code') != 'core':
-                core_code = find_core_set_code(card_name)
+                core_code = find_core_set_code(original_card_info)
                 
                 if core_code:
                     # Successfully found the Core Set version! Use its code.
