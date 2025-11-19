@@ -4,67 +4,84 @@ from PIL import Image, ImageFilter, ImageDraw, ImageOps
 import os
 import math
 
-def detect_card_rotation(img):
+def detect_card_rotation(img, threshold=200):
     """
-    Detect rotation angle of the card by analyzing edges.
-    Returns angle in degrees (negative = clockwise, positive = counter-clockwise).
+    Detects the rotation angle of a card image by analyzing the top edge.
+
+    Args:
+        img (PIL.Image): The input image (expected to be cropped to the card).
+        threshold (int): Pixel intensity threshold for identifying an edge point.
+
+    Returns:
+        float: The detected angle of rotation in degrees (positive is counter-clockwise).
     """
-    # Convert to grayscale and detect edges
-    gray = img.convert('L')
+    width, height = img.size
+    
+    # 1. Image Preprocessing for Edge Detection
+    # Convert to grayscale ('L') for simplicity
+    gray = img.convert('L') 
+    
+    # Apply a slight Gaussian blur to smooth out noise and fine details (card art), 
+    # ensuring the coarse card border is the dominant feature.
+    # Radius of 1.5 is generally good for minor smoothing.
+    gray = gray.filter(ImageFilter.GaussianBlur(radius=1.5)) 
+    
+    # Apply an edge detection filter
     edges = gray.filter(ImageFilter.FIND_EDGES)
     
-    # Enhance edges
-    edges = ImageOps.autocontrast(edges)
-    
-    width, height = edges.size
+    # Get pixel data for analysis
     pixels = edges.load()
     
-    # Find edge points along the card border
+    # 2. Sample Edge Points from the Top Half of the Image
+    # We only look at the top part since we assume the top border is visible 
+    # and straight across the whole image.
     edge_points = []
-    threshold = 100  # Edge intensity threshold
     
-    # Sample top portion to find top edge angle
-    for y in range(height // 4):
+    max_y_sample = height // 7
+    # Sample the top 1/3 to 1/2 of the image height for a good sample size (height // 2).
+    # We iterate across all columns (x) and the top rows (y).
+    for y in range(max_y_sample): 
         for x in range(width):
+            # Check if the pixel intensity is above the threshold (i.e., it's an edge)
             if pixels[x, y] > threshold:
                 edge_points.append((x, y))
+
+    # 3. Calculate Slope (Linear Regression Approximation)
+    if not edge_points or len(edge_points) < 5:
+        # Not enough data to calculate a reliable angle
+        return 0.0
+
+    # Calculate the average x and y values
+    avg_x = sum(p[0] for p in edge_points) / len(edge_points)
+    avg_y = sum(p[1] for p in edge_points) / len(edge_points)
+
+    # Perform a simple slope calculation (M = Sum[(x_i - avg_x) * (y_i - avg_y)] / Sum[(x_i - avg_x)^2])
+    # This finds the line of best fit for the detected edge points.
+    numerator = 0.0
+    denominator = 0.0
     
-    if len(edge_points) < 10:
-        return 0  # Not enough edge points, assume no rotation
-    
-    # Calculate approximate angle using top edge points
-    # Group points by x-coordinate and find average y
-    x_groups = {}
     for x, y in edge_points:
-        x_bucket = x // 10
-        if x_bucket not in x_groups:
-            x_groups[x_bucket] = []
-        x_groups[x_bucket].append(y)
+        dx = x - avg_x
+        dy = y - avg_y
+        numerator += dx * dy
+        denominator += dx * dx
+
+    # Avoid division by zero (e.g., if all points are perfectly vertical)
+    if denominator == 0:
+        return 0.0
+
+    slope = numerator / denominator
+
+    # 4. Convert Slope to Angle in Degrees
+    # Angle (radians) = atan(slope)
+    angle_rad = math.atan(slope)
+    angle_deg = math.degrees(angle_rad)
+
+    # Note: If the slope calculation is slightly off, the angle can be large. 
+    # We generally expect card skew to be less than +/- 5 degrees.
+    angle_deg = max(-5.0, min(5.0, angle_deg))
     
-    # Get average y for each x group
-    line_points = []
-    for x_bucket, y_values in x_groups.items():
-        avg_y = sum(y_values) / len(y_values)
-        line_points.append((x_bucket * 10, avg_y))
-    
-    if len(line_points) < 2:
-        return 0
-    
-    # Calculate slope using first and last points
-    line_points.sort()
-    x1, y1 = line_points[0]
-    x2, y2 = line_points[-1]
-    
-    if x2 - x1 == 0:
-        return 0
-    
-    slope = (y2 - y1) / (x2 - x1)
-    angle = math.degrees(math.atan(slope))
-    
-    # Limit rotation to small angles (cards shouldn't be wildly rotated)
-    angle = max(-5, min(5, angle))
-    
-    return angle
+    return angle_deg
 
 # Add this function outside of your existing functions
 def create_centered_crop_box(card_bounds, target_aspect_ratio, image_size):
@@ -308,7 +325,7 @@ if __name__ == "__main__":
     
     # Batch process with auto-detection and rotation fix
     batch_process_cards(
-        input_folder='sinister_motives_fullres',
+        input_folder='deck_38353_cards',
         output_folder='processed_cards',
         target_size=(750, 1050),
         auto_detect=True,
