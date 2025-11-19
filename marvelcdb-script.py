@@ -1,3 +1,6 @@
+# Script to get all card images from a MarvelCDB decklist.
+# 11-19-25 Gabriel Berres.
+
 import requests
 import os
 import json
@@ -5,16 +8,13 @@ from time import sleep
 
 # --- CONFIGURATION ---
 BASE_URL = "https://marvelcdb.com"
-DECKLIST_ID = 38353  # Your specific deck ID
+DECKLIST_ID = 38354  # Your specific deck ID
 DECKLIST_ENDPOINT = f"{BASE_URL}/api/public/decklist/{DECKLIST_ID}"
 API_CARDS_ENDPOINT = f"{BASE_URL}/api/public/cards"
 #IMAGE_URL_TEMPLATE = f"{BASE_URL}/card_image/{{card_id}}.jpg"
 IMAGE_URL_TEMPLATE = f"{BASE_URL}/bundles/cards/{{card_id}}.png"
 
 OUTPUT_FOLDER = f"deck_{DECKLIST_ID}_cards"
-# ---------------------
-
-# (Keep the get_json_data and download_card_image functions as they are)
 
 def get_json_data(url, description):
     """Fetches JSON data from a given URL with error handling."""
@@ -52,14 +52,14 @@ def download_card_image(card_code, filename, folder, custom_url=None):
             f.write(image_response.content)
             
         # 5. Check if the file was written and has a reasonable size
-        if os.path.getsize(save_path) > 1000: # Images should be > 1KB
+        if os.path.getsize(save_path) > 1000:
             download_success = True
         else:
             print(f"  Warning: File written for {filename} is too small ({os.path.getsize(save_path)} bytes). Deleting.")
-            os.remove(save_path) # Delete the empty/corrupt file
+            os.remove(save_path)
         
     except requests.exceptions.RequestException as e:
-        # If we fail, print the specific URL used
+        # If fail, print the specific URL used
         print(f"  Failed to download {filename} ({card_code}): {e} for URL: {image_url}")
     except Exception as e:
         print(f"  Unexpected error during file write for {filename}: {e}")
@@ -68,7 +68,7 @@ def download_card_image(card_code, filename, folder, custom_url=None):
         if download_success:
             print(f"  Downloaded: {filename} ({card_code})")
             
-    # Be polite to the server
+    # Naptime
     sleep(0.1)
 
 def find_core_set_code(original_card_info):
@@ -168,7 +168,6 @@ def pull_card_images_by_deck(deck_id, output_folder):
     if not all_cards_list:
         return
     
-    # --- FIX APPLIED HERE ---
     # Convert the list of card objects into a dictionary for fast lookup
     # { "card_code": {card_data}, ... }
     card_data_map = {card['code']: card for card in all_cards_list}
@@ -198,9 +197,7 @@ def pull_card_images_by_deck(deck_id, output_folder):
             else:
                 # Card is already from the Core Set, use its code
                 download_code = card_code
-            
-            # --- Download using the determined 'download_code' ---
-            
+                        
             # Use a sanitized version of the card name for the filename
             sanitized_name = card_name.replace(' ', '_').replace('/', '').replace(':', '')
             

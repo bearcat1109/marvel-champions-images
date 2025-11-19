@@ -315,14 +315,6 @@ def batch_process_cards(input_folder, output_folder, target_size=(750, 1050),
 
 # Example usage:
 if __name__ == "__main__":
-    # Single image with auto-detection and rotation fix
-    # process_card_image('ghost_spider.jpg', 'ghost_spider_processed.jpg', 
-    #                   auto_detect=True, fix_rotation=True)
-    
-    # Single image without rotation fix
-    # process_card_image('ghost_spider.jpg', 'ghost_spider_processed.jpg', 
-    #                   auto_detect=True, fix_rotation=False)
-    
     # Batch process with auto-detection and rotation fix
     batch_process_cards(
         input_folder='deck_38353_cards',

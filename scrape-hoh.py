@@ -1,3 +1,7 @@
+# Script to webscrape Hall of Heroes for card images. Can be higher quality but
+# requires correction. 
+# 11-19-25 Gabriel Berres.
+
 import os
 import re
 import asyncio
