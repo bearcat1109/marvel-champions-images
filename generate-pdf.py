@@ -1,3 +1,5 @@
+# Generate PDF script. 11-20-25 Gabriel Berres.
+
 import os
 import json
 import requests
