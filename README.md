@@ -8,6 +8,8 @@
   - The script also gets core images when available, since the images on these are generally better centered and more consistent than other printings,
   and also sometimes the box printings just do not have images.
 
+**marvelcdb-script-pack.py**: This pulls cards by pack and also pulls multiple copies when appropriate. Pack codes can be found in the JSON in the repo
+
 **scrape-hoh.py**: This scrapes all images from a Hall of Heroes page for use as card images. This can be less consistent but Hall of Heroes
   has high quality images. Replace the URL a the top of the script with the page you want to scrape and then the TARGET_SECTIONS with what parts of
   the page you want to scrape.
