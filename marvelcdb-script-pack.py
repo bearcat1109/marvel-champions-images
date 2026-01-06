@@ -10,14 +10,20 @@ from io import BytesIO
 
 # --- CONFIGURATION ---
 BASE_URL = "https://marvelcdb.com"
-PACK_CODE = "sm"  # Change this to your desired pack code (e.g., 'core', 'trors', 'got', etc.)
+PACK_CODE = "gambit"  # Change this to your desired pack code (e.g., 'core', 'trors', 'got', etc.)
 PACK_ENDPOINT = f"{BASE_URL}/api/public/cards/{PACK_CODE}.json"
 IMAGE_URL_TEMPLATE = f"{BASE_URL}/bundles/cards/{{card_id}}.png"
 
 # Set to True to download only villain/encounter cards, False for all cards
-VILLAIN_ONLY = True
+VILLAIN_ONLY = False
 
-OUTPUT_FOLDER = f"pack_{PACK_CODE}_cards{'_villain_only' if VILLAIN_ONLY else ''}"
+# Set to True to download multiple copies based on pack quantity
+DOWNLOAD_MULTIPLE_COPIES = True
+
+# Set to True to rotate horizontal cards to vertical
+ROTATE_HORIZONTAL = True
+
+OUTPUT_FOLDER = f"pack_{PACK_CODE}_cards{'_villain_only' if VILLAIN_ONLY else ''}{'_multi' if DOWNLOAD_MULTIPLE_COPIES else ''}"
 
 def get_json_data(url, description):
     """Fetches JSON data from a given URL with error handling."""
@@ -30,11 +36,16 @@ def get_json_data(url, description):
         print(f"Error fetching {description}: {e}")
         return None
 
-def download_card_image(card_code, filename, folder):
+def download_card_image(card_code, filename, folder, copy_number=None):
     """Downloads a single card image, rotates if horizontal, and saves it."""
     
     image_url = IMAGE_URL_TEMPLATE.format(card_id=card_code)
-    save_path = os.path.join(folder, f"{card_code}_{filename}.jpg")
+    
+    # Add copy number to filename if provided
+    if copy_number is not None:
+        save_path = os.path.join(folder, f"{card_code}_{filename}_copy{copy_number}.jpg")
+    else:
+        save_path = os.path.join(folder, f"{card_code}_{filename}.jpg")
 
     # Set initial success flag to False
     download_success = False
@@ -48,19 +59,25 @@ def download_card_image(card_code, filename, folder):
         # 3. Check if any content was received
         if not image_response.content:
             print(f"  Warning: Received empty content for {filename} ({card_code}). URL: {image_url}")
-            return
+            return False
         
-        # 4. Open image with PIL to check orientation
-        img = Image.open(BytesIO(image_response.content))
-        width, height = img.size
-        
-        # 5. If image is horizontal (width > height), rotate it 90 degrees clockwise
-        if width > height:
-            print(f"  Rotating horizontal card: {filename}")
-            img = img.rotate(-90, expand=True)  # -90 for clockwise, expand=True adjusts size
-        
-        # 6. Save the image (rotated if necessary)
-        img.save(save_path, 'JPEG', quality=95)
+        if ROTATE_HORIZONTAL:
+            # 4. Open image with PIL to check orientation
+            img = Image.open(BytesIO(image_response.content))
+            width, height = img.size
+            
+            # 5. If image is horizontal (width > height), rotate it 90 degrees clockwise
+            if width > height:
+                if copy_number is None or copy_number == 1:  # Only print rotation message once per card
+                    print(f"  Rotating horizontal card: {filename}")
+                img = img.rotate(-90, expand=True)  # -90 for clockwise, expand=True adjusts size
+            
+            # 6. Save the image (rotated if necessary)
+            img.save(save_path, 'JPEG', quality=95)
+        else:
+            # Save without rotation
+            with open(save_path, 'wb') as f:
+                f.write(image_response.content)
         
         # 7. Check if the file was written and has a reasonable size
         if os.path.getsize(save_path) > 1000:
@@ -76,20 +93,25 @@ def download_card_image(card_code, filename, folder):
         print(f"  Unexpected error during image processing for {filename}: {e}")
         
     finally:
-        if download_success:
+        if download_success and (copy_number is None or copy_number == 1):
             print(f"  Downloaded: {filename} ({card_code})")
             
     # Naptime
     sleep(0.1)
+    
+    return download_success
 
-def pull_card_images_by_pack(pack_code, output_folder, villain_only=False):
+def pull_card_images_by_pack(pack_code, output_folder, villain_only=False, multiple_copies=False):
     """
     Fetches all cards from a pack and downloads their images.
     If villain_only is True, only downloads encounter/villain cards.
+    If multiple_copies is True, downloads based on quantity field in pack data.
     """
     print(f"--- Starting Download for Pack '{pack_code}' ---")
     if villain_only:
         print("    (Villain/Encounter cards only)")
+    if multiple_copies:
+        print("    (Downloading multiple copies based on pack quantity)")
     os.makedirs(output_folder, exist_ok=True)
     
     # 1. Fetch the Pack's Cards
@@ -110,9 +132,11 @@ def pull_card_images_by_pack(pack_code, output_folder, villain_only=False):
     # 2. Filter for villain/encounter cards if requested
     if villain_only:
         pack_cards = [card for card in pack_cards if card.get('faction_code') == 'encounter']
-        print(f"Found {len(pack_cards)} villain/encounter cards in pack '{pack_code}'.")
+        total_quantity = sum(card.get('quantity', 1) for card in pack_cards)
+        print(f"Found {len(pack_cards)} villain/encounter cards in pack '{pack_code}' ({total_quantity} total with copies).")
     else:
-        print(f"Found {len(pack_cards)} total cards in pack '{pack_code}'.")
+        total_quantity = sum(card.get('quantity', 1) for card in pack_cards)
+        print(f"Found {len(pack_cards)} total cards in pack '{pack_code}' ({total_quantity} total with copies).")
     
     # 3. Download Images for each card in the pack
     print(f"\nStarting download...")
@@ -122,6 +146,7 @@ def pull_card_images_by_pack(pack_code, output_folder, villain_only=False):
         card_code = card_info.get('code')
         card_name = card_info.get('name', 'Unknown')
         card_type = card_info.get('type_code', 'unknown')
+        quantity = card_info.get('quantity', 1) if multiple_copies else 1
         
         if not card_code:
             print(f"Warning: Card without code found, skipping: {card_name}")
@@ -133,16 +158,33 @@ def pull_card_images_by_pack(pack_code, output_folder, villain_only=False):
         if villain_only:
             sanitized_name = f"{card_type}_{sanitized_name}"
         
-        download_card_image(
-            card_code=card_code, 
-            filename=sanitized_name, 
-            folder=output_folder
-        )
-        downloaded_count += 1
+        # Download multiple copies if requested
+        if multiple_copies and quantity > 1:
+            print(f"  Downloading {quantity}x {card_name}...")
+            for copy_num in range(1, quantity + 1):
+                success = download_card_image(
+                    card_code=card_code, 
+                    filename=sanitized_name, 
+                    folder=output_folder,
+                    copy_number=copy_num
+                )
+                if success:
+                    downloaded_count += 1
+                sleep(0.05)  # Small delay between copies
+        else:
+            # Download single copy
+            success = download_card_image(
+                card_code=card_code, 
+                filename=sanitized_name, 
+                folder=output_folder,
+                copy_number=None
+            )
+            if success:
+                downloaded_count += 1
             
     print(f"\nSuccessfully downloaded {downloaded_count} card images from pack '{pack_code}'.")
     print("--- Download Complete ---")
 
 
 if __name__ == "__main__":
-    pull_card_images_by_pack(PACK_CODE, OUTPUT_FOLDER, villain_only=VILLAIN_ONLY)
+    pull_card_images_by_pack(PACK_CODE, OUTPUT_FOLDER, villain_only=VILLAIN_ONLY, multiple_copies=DOWNLOAD_MULTIPLE_COPIES)
